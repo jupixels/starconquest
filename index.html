@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>Starlane Frontier</title>
+<title>Star Frontier</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -542,7 +542,7 @@ body.touch #steerHud{display:none}
 
 <section id="title">
   <p class="kicker">A space flight simulator</p>
-  <h1>Starlane<br>Frontier</h1>
+  <h1>Star<br>Frontier</h1>
   <p class="lede">You wake in a clone bay with someone else's memories. Mine glowing ore, trade, arm your ship, and follow a forty-year-old signal into the deep wild, where the drone swarms called the Choir are waiting.</p>
   <p id="titleChap" hidden></p>
   <div class="keys" id="keyList">
@@ -579,7 +579,7 @@ body.touch #steerHud{display:none}
 <section id="help" class="panel" hidden></section>
 <section id="settings" class="panel" hidden></section>
 <div id="welcome" hidden role="dialog" aria-modal="true" aria-labelledby="wTitle"><div class="wcard">
-  <p class="lbl">Starlane Frontier</p>
+  <p class="lbl">Star Frontier</p>
   <h2 id="wTitle">Welcome, pilot</h2>
   <p class="wgoal"><b>Your goal:</b> grow from a tiny fighter into the best-equipped pilot in the galaxy.</p>
   <p>You fly a small spaceship on a big frontier. Here is how it works:</p>
@@ -5249,7 +5249,7 @@ function storyEnding(){
   setTimeout(()=>{
     if(!S.lasers.includes('drift')) S.lasers.push('drift');
     const t=Math.round((S.stats.earned||0)).toLocaleString();
-    const el=$('#ending'); el.innerHTML=`<div class="ecard"><p class="lbl">Starlane Frontier · The Choir</p><h2>The lanes are quiet</h2>
+    const el=$('#ending'); el.innerHTML=`<div class="ecard"><p class="lbl">Star Frontier · The Choir</p><h2>The lanes are quiet</h2>
       <p>The Choir Heart is gone, and with it the signal that drove the drones for forty years. Captain Elan Rook went out to Terminus and never came home. You did.</p>
       <dl class="kv"><dt>Drones destroyed</dt><dd>${S.stats.kills.toLocaleString()}</dd><dt>Systems visited</dt><dd>${S.visited.length} of ${GALAXY.N}</dd><dt>Credits earned</dt><dd>${t} CR</dd><dt>Clones used</dt><dd>${(S.stats.clones||0)+1}</dd></dl>
       <p class="note">Reward unlocked: <b style="color:#ffe9b0">Driftlight</b> laser color at the Outfitter. The frontier stays open. Keep flying, keep building.</p>
