@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>Star Frontier</title>
+<title>Star Conquest</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -124,6 +124,7 @@ body.touch #stHint{display:none}
 #title{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;justify-content:flex-end;gap:22px;padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px));padding-block:40px calc(48px + env(safe-area-inset-bottom,0px));background:linear-gradient(90deg,rgba(3,5,11,.88) 0%,rgba(3,5,11,.55) 45%,rgba(3,5,11,0) 75%)}
 #title h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(54px,10.5vw,128px);line-height:.82;letter-spacing:.02em;text-transform:uppercase;background:linear-gradient(180deg,#fff 30%,var(--hud));-webkit-background-clip:text;background-clip:text;color:transparent}
 #title .kicker{margin:0 0 -10px;font-family:var(--f-display);font-weight:600;font-size:14px;letter-spacing:.42em;text-transform:uppercase;color:var(--hud)}
+#title .lede .goal{display:block;margin-bottom:4px;font-family:var(--f-display);font-weight:600;font-size:13px;letter-spacing:.2em;text-transform:uppercase;color:var(--amber)}
 #title .lede{max-width:46ch;font-size:14px;line-height:1.6;color:rgba(223,247,255,.78);margin:0}
 .keys{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,max-content));gap:6px 22px;font-size:12px;color:rgba(223,247,255,.7);max-width:640px}
 .keys span b{display:inline-block;min-width:22px;padding:0 6px;margin-right:8px;border:1px solid var(--line);color:var(--hud);font-weight:500;text-align:center}
@@ -542,8 +543,8 @@ body.touch #steerHud{display:none}
 
 <section id="title">
   <p class="kicker">A space flight simulator</p>
-  <h1>Star<br>Frontier</h1>
-  <p class="lede">You wake in a clone bay with someone else's memories. Mine glowing ore, trade, arm your ship, and follow a forty-year-old signal into the deep wild, where the drone swarms called the Choir are waiting.</p>
+  <h1>Star<br>Conquest</h1>
+  <p class="lede"><b class="goal">Your goal</b>Conquer the frontier. Mine and trade to build your fortune and fleet, destroy the drone hives to free all 18 systems, and silence the Choir at Terminus, the last system.</p>
   <p id="titleChap" hidden></p>
   <div class="keys" id="keyList">
     <span><b>Mouse</b>Steer toward cursor</span>
@@ -560,7 +561,6 @@ body.touch #steerHud{display:none}
     <span><b>F</b>Shock Pulse (rank Wingman)</span>
     <span><b>1 2 3</b>Ship weapons</span>
   </div>
-  <p class="new">New · <span>Story campaign: The Choir · Final boss · Ship weapons · Route planner · Settings · Damage direction indicator</span></p>
   <div class="cta"><button class="btn primary" id="launch" type="button">Launch</button><button class="btn ghost" id="resetSave" type="button" hidden>New pilot</button><button class="btn ghost" id="titleSet" type="button">Settings</button></div>
 </section>
 
@@ -579,9 +579,9 @@ body.touch #steerHud{display:none}
 <section id="help" class="panel" hidden></section>
 <section id="settings" class="panel" hidden></section>
 <div id="welcome" hidden role="dialog" aria-modal="true" aria-labelledby="wTitle"><div class="wcard">
-  <p class="lbl">Star Frontier</p>
+  <p class="lbl">Star Conquest</p>
   <h2 id="wTitle">Welcome, pilot</h2>
-  <p class="wgoal"><b>Your goal:</b> grow from a tiny fighter into the best-equipped pilot in the galaxy.</p>
+  <p class="wgoal"><b>Your goal:</b> conquer the frontier. Grow from a tiny fighter into a powerful pilot and free all 18 star systems from the drones.</p>
   <p>You fly a small spaceship on a big frontier. Here is how it works:</p>
   <ul>
     <li><b>Mine and fight.</b> Shoot glowing asteroids for ore, and shoot drones for salvage.</li>
@@ -5249,7 +5249,7 @@ function storyEnding(){
   setTimeout(()=>{
     if(!S.lasers.includes('drift')) S.lasers.push('drift');
     const t=Math.round((S.stats.earned||0)).toLocaleString();
-    const el=$('#ending'); el.innerHTML=`<div class="ecard"><p class="lbl">Star Frontier · The Choir</p><h2>The lanes are quiet</h2>
+    const el=$('#ending'); el.innerHTML=`<div class="ecard"><p class="lbl">Star Conquest · The Choir</p><h2>The lanes are quiet</h2>
       <p>The Choir Heart is gone, and with it the signal that drove the drones for forty years. Captain Elan Rook went out to Terminus and never came home. You did.</p>
       <dl class="kv"><dt>Drones destroyed</dt><dd>${S.stats.kills.toLocaleString()}</dd><dt>Systems visited</dt><dd>${S.visited.length} of ${GALAXY.N}</dd><dt>Credits earned</dt><dd>${t} CR</dd><dt>Clones used</dt><dd>${(S.stats.clones||0)+1}</dd></dl>
       <p class="note">Reward unlocked: <b style="color:#ffe9b0">Driftlight</b> laser color at the Outfitter. The frontier stays open. Keep flying, keep building.</p>
