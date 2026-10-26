@@ -615,6 +615,9 @@ body.touch #steerHud{display:none}
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<!-- Sound effects: Kenney.nl (CC0) via the game-sounds library -->
+<script src="lib/sfx.js"></script>
+<script src="lib/sounds-embedded.js"></script>
 <script>
 (function(){
 'use strict';
@@ -799,8 +802,17 @@ const st = {
 const cargoUsed = ()=>Object.values(S.cargo).reduce((a,b)=>a+b,0);
 
 /* ======================= AUDIO ======================= */
+/* Sound effects are real recordings (Kenney.nl, CC0) played through lib/sfx.js from lib/sounds-embedded.js.
+   This object keeps its own AudioContext for the procedural music; the effects run on the sample player (this.lib). */
+const SFX_MIX = {   // per-event level on top of each sample's suggested volume
+  shoot:0.45, turret:0.3, eshoot:0.4, eheavy:0.55, hit:0.5, hurt:0.9, boom:1, bigboom:1, thrust:0.5, engine:1,
+  pickup:0.5, click:0.4, heartbeat:0.9, kill:0.35, windup:0.5, golden:0.6, shield:0.8, dock:0.7, undock:0.7,
+  talk:0.45, next:0.35, confirm:0.55, coins:0.6, upgrade:0.6, notify:0.55, tick:0.3, eerie:0.5, alarm:0.7,
+  distress:0.6, boss:0.9, loot:0.6, combo:0.5, drop:0.5, rankup:0.8, contract:0.75, achieve:0.7, story:0.6,
+  ending:0.8, success:0.7, step:0.45, beam:0.6, buzz:0.25, missile:0.45, arc:0.6, go:0.7, ring:0.55, cancel:0.45, threat:0.6
+};
 const sfx = {
-  ctx:null, master:null, muted:false, hum:null, humGain:null, noise:null,
+  ctx:null, master:null, muted:false, noise:null, lib:null, humGain:null, humH:null,
   init(){
     if (this.ctx) return;
     try{
@@ -808,33 +820,38 @@ const sfx = {
       this.ctx = new C(); this.master = this.ctx.createGain(); this.master.gain.value = this.muted?0:masterVol(); this.master.connect(this.ctx.destination);
       const len = this.ctx.sampleRate*1.2, buf = this.ctx.createBuffer(1,len,this.ctx.sampleRate), ch = buf.getChannelData(0);
       for(let i=0;i<len;i++) ch[i] = Math.random()*2-1;
-      this.noise = buf;
-      const o = this.ctx.createOscillator(); o.type='sawtooth'; o.frequency.value=48;
-      const f = this.ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=180;
-      this.humGain = this.ctx.createGain(); this.humGain.gain.value=0;
-      o.connect(f); f.connect(this.humGain); this.humGain.connect(this.master); o.start(); this.hum=o;
+      this.noise = buf;   // used by the music's percussion
     }catch(e){ this.ctx=null; }
+    try{
+      if(window.SFX && window.SFX_DATA){
+        this.lib = new SFX(); this.syncVol();
+        this.lib.load(window.SFX_DATA).then(()=>{
+          const h=this.lib.loop('engine',{volume:0,fadeIn:0});
+          if(h){ this.humH=h; this.humGain=h.gain; }
+        });
+      }
+    }catch(e){ this.lib=null; }
   },
-  tone(type,f0,f1,dur,vol){
-    if(!this.ctx) return; const t=this.ctx.currentTime;
-    const o=this.ctx.createOscillator(), g=this.ctx.createGain(); o.type=type;
-    o.frequency.setValueAtTime(f0,t); o.frequency.exponentialRampToValueAtTime(Math.max(20,f1),t+dur);
-    g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-    o.connect(g); g.connect(this.master); o.start(t); o.stop(t+dur+0.02);
+  /* play a named effect: opts = volume (0-1 scale), rate, vary, pan, cooldown, delay */
+  play(name,o){
+    const L=this.lib; if(!L||!L.buffers[name]) return null;
+    o=Object.assign({},o); o.volume=(o.volume??1)*(SFX_MIX[name]??1);
+    return L.play(name,o);
   },
-  boom(vol,dur,freq){
-    if(!this.ctx||!this.noise) return; const t=this.ctx.currentTime;
-    const s=this.ctx.createBufferSource(); s.buffer=this.noise;
-    const f=this.ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.setValueAtTime(freq||900,t); f.frequency.exponentialRampToValueAtTime(60,t+dur);
-    const g=this.ctx.createGain(); g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-    s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t+dur);
+  later(name,ms,o){ setTimeout(()=>this.play(name,o),ms); },
+  /* play the first part of a long sample, fading out after dur seconds */
+  burst(name,dur,o){ const h=this.play(name,Object.assign({fadeIn:0.15},o)); if(h) setTimeout(()=>h.stop(0.4),dur*1000); return h; },
+  engine(fl){ if(!this.humH) return; this.humGain.gain.value=(0.12+fl*0.55)*SFX_MIX.engine; this.humH.setRate(0.75+fl*0.45); },
+  explode(vol){   // vol was the old 0..0.5 loudness, already scaled by size and distance
+    if(vol<0.02) return; this.play(vol>0.3?'bigboom':'boom',{volume:Math.min(1,vol*2.4),vary:0.08,cooldown:0.05});
   },
-  laser(){ this.tone('square',1400,260,0.09,0.035); },
-  elaser(){ this.tone('sawtooth',420,110,0.16,0.03); },
-  hit(){ this.boom(0.12,0.12,2200); },
-  pickup(){ this.tone('sine',700,1300,0.12,0.05); },
-  click(){ this.tone('sine',900,1200,0.06,0.04); },
-  setMute(m){ this.muted=m; if(this.master) this.master.gain.value=m?0:masterVol(); }
+  laser(){ this.play('shoot',{vary:0.06}); },
+  elaser(){ this.play('eshoot',{vary:0.08}); },
+  hit(){ this.play('hit',{vary:0.1}); },
+  hurt(){ this.play('hurt',{vary:0.05,cooldown:0.12}); },
+  click(){ this.play('click',{vary:0.03}); },
+  syncVol(){ if(this.lib) this.lib.master.gain.value=this.muted?0:SET.vol/100*0.85; },
+  setMute(m){ this.muted=m; if(this.master) this.master.gain.value=m?0:masterVol(); this.syncVol(); }
 };
 
 /* Procedural soundtrack: slow pads + plucked arpeggios, warmer in stations, a pulsing layer in combat */
@@ -1723,7 +1740,7 @@ function explosion(pos, scale, rgb){
   flash(pos, [4,2.6,1.4], 40*scale, 0.6);
   shockwave(pos, rgb||[2.4,1.2,0.5], 50*scale, 0.9);
   debris(pos, scale, rgb);
-  const d=pos.distanceTo(ship.position); P.shake=Math.max(P.shake,Math.min(1.2,scale*260/(d+120))); sfx.boom(Math.min(0.5,0.35*scale*400/(d+200)), 0.6+scale*0.3, 1200);
+  const d=pos.distanceTo(ship.position); P.shake=Math.max(P.shake,Math.min(1.2,scale*260/(d+120))); sfx.explode(Math.min(0.5,0.35*scale*400/(d+200)));
 }
 
 /* Tumbling hot debris thrown out by explosions */
@@ -1833,7 +1850,7 @@ function damagePlayer(dmg){
   if(mode!=='fly'&&mode!=='jump'&&mode!=='menu') return;
   P.lastHit=time;
   if(P.shield>0){ const a=Math.min(P.shield,dmg); P.shield-=a; dmg-=a; shieldMat.uniforms.k.value=1.6; $('#shieldFx').style.opacity=0.7; }
-  if(dmg>0){ P.hull-=dmg; $('#vignette').style.opacity=Math.min(1,0.4+dmg/30); sfx.hit(); P.shake=Math.max(P.shake,Math.min(0.9,0.25+dmg/40)); }
+  if(dmg>0){ P.hull-=dmg; $('#vignette').style.opacity=Math.min(1,0.4+dmg/30); sfx.hurt(); P.shake=Math.max(P.shake,Math.min(0.9,0.25+dmg/40)); }
   if(P.hull<=0) die();
 }
 function die(){
@@ -2059,7 +2076,7 @@ function startWarp(dest){
   resetInputs();
   if(INV.active&&INV.so){ INV.so.o.damaged=true; INV.so.o.hp=0; INV.active=false; toast('You left during an invasion — that outpost was knocked offline','bad'); }
   mode='warp'; warp={t:0,dest,built:false};
-  sfx.tone('sawtooth',60,600,2.0,0.05);
+  sfx.burst('thrust',2.0);
 }
 function finishWarp(){
   warp=null; mode='fly'; P.throttle=0.25; P.speed=Math.min(P.speed,40);
@@ -2081,7 +2098,7 @@ function updateWarp(dt){
       ship.position.copy(SPAWN_POS).add(new V3(0,0,600).applyQuaternion(ship.quaternion));
       // clear any asteroids sitting on the arrival lane
       for(let k=asteroids.length-1;k>=0;k--){ const a=asteroids[k]; if(segHit(ship.position,SPAWN_POS,a.pos,a.r+40)){ sys.group.remove(a.mesh); if(a.glow){ sys.group.remove(a.glow); a.glow.material.dispose(); } asteroids.splice(k,1); } }
-      sfx.boom(0.3,1.2,400); banner(`System ${warp.dest+1} · ${sys.info.label}`, sys.info.name); routeArrive(); saveGame();
+      sfx.play('bigboom',{volume:0.6,rate:0.85}); banner(`System ${warp.dest+1} · ${sys.info.label}`, sys.info.name); routeArrive(); saveGame();
       warpFwd.set(0,0,-1).applyQuaternion(ship.quaternion);
     }
     const k=clamp((t-1.7)/1.2,0,1);
@@ -2249,7 +2266,7 @@ function hitFrom(src){
 const invCam=new THREE.Quaternion();
 function feedbackTick(dt){
   for(const s of DMG.els){ if(s.t>0){ s.t=Math.max(0,s.t-dt*1.3); s.e.style.opacity=s.t.toFixed(2); } }
-  if(mode==='fly'&&P.hull>0&&P.hull/st.hullMax<0.25){ hbT-=dt; if(hbT<=0){ hbT=0.95; sfx.tone('sine',64,40,0.2,0.12); setTimeout(()=>sfx.tone('sine',58,38,0.18,0.08),190);
+  if(mode==='fly'&&P.hull>0&&P.hull/st.hullMax<0.25){ hbT-=dt; if(hbT<=0){ hbT=0.95; sfx.play('heartbeat',{vary:0}); sfx.later('heartbeat',190,{volume:0.7,rate:0.92,vary:0});
     const v=$('#vignette'); v.style.opacity=Math.max(+v.style.opacity||0,0.4); hint('lowhull','Hull critical! Break away, let your shield recharge, or dock to repair.',0); } }
 }
 let sparkT=0;
@@ -2260,7 +2277,7 @@ function damageFx(dt){
   burst(p,[3.2,1.4,0.4],4,16*sz,1.1,0.55);
   if(f<0.2&&Math.random()<0.35) flash(p,[3,1.6,0.6],5*sz,0.15);
 }
-function killMark(){ const r=$('#reticle'); r.classList.add('kill'); clearTimeout(killT); killT=setTimeout(()=>r.classList.remove('kill'),220); sfx.tone('triangle',880,1320,0.09,0.03); }
+function killMark(){ const r=$('#reticle'); r.classList.add('kill'); clearTimeout(killT); killT=setTimeout(()=>r.classList.remove('kill'),220); sfx.play('kill'); }
 function hitMark(){ const r=$('#reticle'); r.classList.remove('hit'); void r.offsetWidth; r.classList.add('hit'); clearTimeout(hmT); hmT=setTimeout(()=>r.classList.remove('hit'),140); }
 // solid parts of the station: main ring, upper ring, hub disc and the central spine. Pushes p out; returns true on contact.
 function stationCollide(sp){
@@ -2326,7 +2343,7 @@ function updatePlayer(dt,cruise){
   if(stationCollide(ship.position)) P.speed*=0.5;
   const fl=0.25+P.speed/st.maxSpeed*0.75+(P.boosting?0.8:0);
   model.flames.forEach(f=>{ f.plume.scale.set(f.k,f.k,clamp(fl,0.15,2.4)*(0.9+Math.random()*0.15)); f.glow.scale.setScalar((2.4+fl*1.8)*f.k); });
-  if(sfx.humGain){ sfx.humGain.gain.value=0.02+fl*0.035; sfx.hum.frequency.value=40+fl*30; }
+  if(sfx.humGain){ sfx.engine(fl); }
 }
 
 function spawnDrone(pos,i,extra){
@@ -2361,7 +2378,7 @@ function chargerSteer(d,desired,pd,dt){
   if(!d.cs){ d.cs='stalk'; d.ct=2.5+Math.random()*2.5; }
   d.ct-=dt;
   if(d.cs==='stalk'){   // moves like a normal drone until it decides to charge
-    if(d.ct<=0&&pd<650){ d.cs='windup'; d.ct=1.1; if(pd<900) sfx.tone('square',700,1700,0.6,0.045); }
+    if(d.ct<=0&&pd<650){ d.cs='windup'; d.ct=1.1; if(pd<900) sfx.play('windup'); }
   } else if(d.cs==='windup'){
     d.vel.multiplyScalar(Math.pow(0.03,dt)); d.mesh.eye.scale.setScalar(10+(1.1-d.ct)*16);
     if(d.ct<=0){ d.cs='charge'; d.ct=3.2; d.cdir=(d.cdir||new V3()).copy(ship.position).sub(d.pos).normalize(); }
@@ -2445,11 +2462,11 @@ function hitAsteroid(a,j,dmg,p){
     burst(pos,[1.2,1.0,0.85],80,a.r*3,a.r*0.25,1.6);
     if(a.ore) burst(pos,a.ore.rgb,40,a.r*2.5,a.r*0.18,1.3);
     flash(pos,[3,2.5,2],a.r*4,0.5); shockwave(pos,[1.6,1.4,1.2],a.r*4,0.8);
-    sfx.boom(0.25,0.8,700); tutEvent('rock'); S.stats.rocks++; if(a.golden) S.stats.golden++;
+    sfx.play('boom',{volume:0.7,vary:0.1}); tutEvent('rock'); S.stats.rocks++; if(a.golden) S.stats.golden++;
     const mult=comboBreak();
     const n=Math.round(Math.max(2,a.r/4+Math.random()*2)*mult*(a.golden?1.6:1));
     for(let k=0;k<n;k++) spawnPickup(pos,a.ore&&(a.golden?k%3!==2:k%2===0)?a.ore:ORE.ferrite,a.r);
-    if(a.golden){ contractEvent('golden'); addXp(40); flash(pos,[4,3,1],a.r*8,0.8); toast('Golden asteroid cracked!','ore'); sfx.tone('triangle',800,1800,0.5,0.06); }
+    if(a.golden){ contractEvent('golden'); addXp(40); flash(pos,[4,3,1],a.r*8,0.8); toast('Golden asteroid cracked!','ore'); sfx.play('golden'); }
     sys.group.remove(a.mesh); if(a.glow){ sys.group.remove(a.glow); a.glow.material.dispose(); } asteroids.splice(j,1);
     respawns.push({t:70,field:a.field});
   }
@@ -3257,7 +3274,7 @@ function updateStationExtras(dt){
   }
   if(STN.visitors){ const hz=ROOMS.find(r=>r.id==='hangar').z0;
     for(const v of STN.visitors){ const p=v.g.position;
-      if(v.state==='parked'){ v.t-=dt; p.y=v.home.y+Math.sin(time*1.3+v.home.x)*0.05; if(v.t<=0){ v.state='lift'; if(roomAt(STN.pos.x,STN.pos.z)===ROOMS.find(r=>r.id==='hangar')) sfx.tone('sine',90,190,1.6,0.04); } }
+      if(v.state==='parked'){ v.t-=dt; p.y=v.home.y+Math.sin(time*1.3+v.home.x)*0.05; if(v.t<=0){ v.state='lift'; if(roomAt(STN.pos.x,STN.pos.z)===ROOMS.find(r=>r.id==='hangar')) sfx.burst('thrust',1.6,{volume:0.5,rate:0.7}); } }
       else if(v.state==='lift'){ p.y=Math.min(7.5,p.y+dt*2.0); v.g.rotation.x=Math.sin(time*2)*0.02; if(p.y>=7.5){ v.state='go'; v.sp=2; } }
       else if(v.state==='go'){ v.sp=Math.min(80,v.sp+dt*(3+v.sp*0.7)); p.z-=v.sp*dt; v.g.rotation.x=-0.04; if(p.z<hz-280){ v.state='away'; v.t=16+Math.random()*24; v.g.visible=false; } }
       else if(v.state==='away'){ v.t-=dt; if(v.t<=0){ v.state='return'; v.g.visible=true; p.set(v.home.x,7.5,hz-280); v.g.rotation.set(0,Math.PI,0); } }
@@ -3284,7 +3301,7 @@ function enterStation(opts){
   $('#sysName').textContent=sys.info.station; $('#fireBtn').textContent='JUMP';
   P.shield=st.shieldMax; P.energy=100;
   if(sfx.humGain) sfx.humGain.gain.value=0;
-  if(clone){ banner(`Clone #${S.stats.clones||1} online`, `${sys.info.station} · ${sys.info.name}`); sfx.tone('sine',220,660,1.6,0.05); setTimeout(()=>sfx.tone('triangle',440,880,0.5,0.04),1400);
+  if(clone){ banner(`Clone #${S.stats.clones||1} online`, `${sys.info.station} · ${sys.info.name}`); sfx.play('shield'); sfx.later('confirm',1400);
     hint('clone',`You woke up as a clone. Your ships are safe in the hangar, but the credits you carried are gone. Next time, store savings in the Credit Vault here — vault credits survive.`,3400); saveGame(); return; }
   banner('Docked · Welcome aboard', sys.info.station);
   setTimeout(()=>{ if(mode==='station'&&P.hull<=st.hullMax*0.5) toast(`Hull at ${Math.max(0,Math.round(P.hull/st.hullMax*100))}% · repair it at the Shipyard before you fly out`,'bad'); },1500);   // low-hull reminder on every docking
@@ -3306,7 +3323,7 @@ function exitStation(){
 }
 const LAUNCH_CAM=new V3(34,BAY_Y-34,BAY_Z+130);   // below the main ring and outside it, so nothing blocks the bay
 let CINE=null; const _c1=new V3(), _c2=new V3(), _cq=new THREE.Quaternion();
-function dock(){ if(!nearStation()||busy||CINE) return; resetInputs(); P.throttle=0; sfx.tone('sine',420,840,0.25,0.05);
+function dock(){ if(!nearStation()||busy||CINE) return; resetInputs(); P.throttle=0; sfx.play('dock');
   CINE={kind:'dock',t:0,t0:performance.now(),pts:dockPath(ship.position),i:0,spd:Math.hypot(ship.position.x,ship.position.z)<260?20:Math.max(60,Math.min(P.speed,140)),near:Math.hypot(ship.position.x,ship.position.z)<260,faded:false,yaw:0}; toast('Docking computer engaged'); }
 // Route to the bay without crossing the station: lift off the ring plane, swing around the outside, line up, then fly straight in.
 function dockPath(p){
@@ -3349,7 +3366,7 @@ function updateCine(dt){
   }
   const fl=0.6+P.speed/120; model.flames.forEach(f=>{ f.plume.scale.set(f.k,f.k,fl*(0.9+Math.random()*0.15)); f.glow.scale.setScalar((2.4+fl*1.8)*f.k); });
 }
-function undock(){ sfx.tone('sine',840,420,0.25,0.05); fadeThen(exitStation); }
+function undock(){ sfx.play('undock'); fadeThen(exitStation); }
 
 function interact(){
   const t=STN.near; if(!t) return;
@@ -3530,7 +3547,7 @@ function openTalk(n){
   if(!n.persona) return;
   const pz=n.persona; n.ti=(n.ti||0)%pz.topics.length; const topic=pz.topics[n.ti]; n.ti++;
   S.stats.talks++; TALK.npc=n; TALK.lines=topic; TALK.i=0; n.talking=true; STN.panel='talk';
-  showTalkLine(); $('#talk').hidden=false; sfx.tone('sine',700,900,0.08,0.04);
+  showTalkLine(); $('#talk').hidden=false; sfx.play('talk');
 }
 function showTalkLine(){
   const pz=TALK.npc.persona, l=TALK.lines[TALK.i]; TALK.full=typeof l==='function'?l():l; TALK.shown=0; TALK.t=0;
@@ -3539,7 +3556,7 @@ function showTalkLine(){
 }
 function talkNext(){
   if(TALK.shown<TALK.full.length){ TALK.shown=TALK.full.length; $('#talkTxt').textContent=TALK.full; return; }
-  if(TALK.i<TALK.lines.length-1){ TALK.i++; showTalkLine(); sfx.tone('sine',650,800,0.05,0.025); } else closeStationPanel();
+  if(TALK.i<TALK.lines.length-1){ TALK.i++; showTalkLine(); sfx.play('next'); } else closeStationPanel();
 }
 function closeTalk(){ $('#talk').hidden=true; if(TALK.npc){ TALK.npc.talking=false; TALK.npc.wait=1.5; } TALK.npc=null; }
 function updateTalk(dt){
@@ -3586,7 +3603,7 @@ function homeHtml(){
   return s+`<div class="pfoot"><span class="lbl">Make yourself at home</span><button class="btn ghost" data-close>Close · Esc</button></div>`;
 }
 function restInBed(){
-  fadeThen(()=>{ P.hull=st.hullMax; P.shield=st.shieldMax; toast('You feel rested. Hull fully repaired for free.','ore'); sfx.tone('sine',300,600,0.6,0.05); saveGame(); });
+  fadeThen(()=>{ P.hull=st.hullMax; P.shield=st.shieldMax; toast('You feel rested. Hull fully repaired for free.','ore'); sfx.play('confirm'); saveGame(); });
 }
 
 /* Market & shipyard consoles */
@@ -3641,18 +3658,18 @@ $('#dock').addEventListener('click',e=>{
     ids.forEach(id=>{ const q=S.cargo[id]||0; if(q) got+=sellUnits(id,q,1,0.006); delete S.cargo[id]; });
     const barIds=all?Object.keys(S.bars):b.dataset.sellbar?[b.dataset.sellbar]:[];
     barIds.forEach(id=>{ const q=S.bars[id]||0; if(q) got+=sellUnits(id,q*10,REF_BONUS,0.0025); delete S.bars[id]; });
-    if(got){ tutEvent('sold'); gainStanding(sys.info.i,Math.min(15,Math.ceil(got/250))); addCredits(got); toast(`Sold for ${got.toLocaleString()} CR`,'ore'); sfx.tone('triangle',600,1200,0.2,0.06); sfx.boom(0.05,0.3,3000);
+    if(got){ tutEvent('sold'); gainStanding(sys.info.i,Math.min(15,Math.ceil(got/250))); addCredits(got); toast(`Sold for ${got.toLocaleString()} CR`,'ore'); sfx.play('coins');
       if(ids.some(id=>demand(sys.info.i,id)<0.86)) hint('market','Selling lots of one ore lowers its price at this station. Prices recover over a few minutes — or sell in another system.',500); } }
   else if(b.dataset.refine){ const id=b.dataset.refine;
-    if((S.cargo[id]||0)>=10&&S.refinery.jobs.length<S.refinery.level){ S.cargo[id]-=10; if(!S.cargo[id]) delete S.cargo[id]; const t=nowMs(); S.refinery.jobs.push({ore:id,start:t,end:t+refTime()}); toast(`Refining a ${ORE[id].name} bar`); sfx.tone('sine',300,500,0.2,0.05); } }
-  else if(b.hasAttribute('data-refup')){ const c=refUpCost(S.refinery.level); if(S.credits>=c&&S.refinery.level<4){ S.credits-=c; S.refinery.level++; toast(`Refinery upgraded to level ${S.refinery.level}`); sfx.tone('triangle',400,1600,0.35,0.06); } }
+    if((S.cargo[id]||0)>=10&&S.refinery.jobs.length<S.refinery.level){ S.cargo[id]-=10; if(!S.cargo[id]) delete S.cargo[id]; const t=nowMs(); S.refinery.jobs.push({ore:id,start:t,end:t+refTime()}); toast(`Refining a ${ORE[id].name} bar`); sfx.play('confirm',{rate:0.85}); } }
+  else if(b.hasAttribute('data-refup')){ const c=refUpCost(S.refinery.level); if(S.credits>=c&&S.refinery.level<4){ S.credits-=c; S.refinery.level++; toast(`Refinery upgraded to level ${S.refinery.level}`); sfx.play('upgrade'); } }
   else if(b.hasAttribute('data-repair')){ const missing=st.hullMax-P.hull, cost=Math.ceil(missing*1.2);
-    if(S.credits>=cost){ S.credits-=cost; P.hull=st.hullMax; } else { P.hull+=S.credits/1.2; S.credits=0; } sfx.tone('sine',300,600,0.2,0.05); }
+    if(S.credits>=cost){ S.credits-=cost; P.hull=st.hullMax; } else { P.hull+=S.credits/1.2; S.credits=0; } sfx.play('confirm'); }
   else if(b.dataset.ytab){ STN.yardTab=b.dataset.ytab; sfx.click(); }
-  else if(b.hasAttribute('data-rent')){ if(!S.home.rented&&S.credits>=HOME_RENT){ S.credits-=HOME_RENT; S.home.rented=true; applyHome(); banner('Welcome home','Your quarters are ready'); sfx.tone('triangle',400,1200,0.4,0.06); } }
-  else if(b.dataset.buyhome){ const it=HOME_ITEMS.find(x=>x.id===b.dataset.buyhome); if(it&&S.home.rented&&!S.home.items[it.id]&&S.credits>=it.c){ S.credits-=it.c; S.home.items[it.id]=1; applyHome(); toast(`${it.n} placed in your quarters`); sfx.tone('triangle',500,1000,0.25,0.05); } }
-  else if(b.dataset.vdep){ const n=b.dataset.vdep==='all'?Math.floor(S.credits):Math.min(+b.dataset.vdep,Math.floor(S.credits)); if(n>0){ S.credits-=n; shownCredits=S.credits; S.vault+=n; toast(`Stored ${n.toLocaleString()} CR in the vault`); sfx.tone('triangle',500,900,0.2,0.05); } }
-  else if(b.dataset.vwd){ const n=b.dataset.vwd==='all'?S.vault:Math.min(+b.dataset.vwd,S.vault); if(n>0){ S.vault-=n; S.credits+=n; shownCredits=S.credits; toast(`Took ${n.toLocaleString()} CR from the vault`); sfx.tone('triangle',900,500,0.2,0.05); } }
+  else if(b.hasAttribute('data-rent')){ if(!S.home.rented&&S.credits>=HOME_RENT){ S.credits-=HOME_RENT; S.home.rented=true; applyHome(); banner('Welcome home','Your quarters are ready'); sfx.play('contract'); } }
+  else if(b.dataset.buyhome){ const it=HOME_ITEMS.find(x=>x.id===b.dataset.buyhome); if(it&&S.home.rented&&!S.home.items[it.id]&&S.credits>=it.c){ S.credits-=it.c; S.home.items[it.id]=1; applyHome(); toast(`${it.n} placed in your quarters`); sfx.play('confirm'); } }
+  else if(b.dataset.vdep){ const n=b.dataset.vdep==='all'?Math.floor(S.credits):Math.min(+b.dataset.vdep,Math.floor(S.credits)); if(n>0){ S.credits-=n; shownCredits=S.credits; S.vault+=n; toast(`Stored ${n.toLocaleString()} CR in the vault`); sfx.play('coins'); } }
+  else if(b.dataset.vwd){ const n=b.dataset.vwd==='all'?S.vault:Math.min(+b.dataset.vwd,S.vault); if(n>0){ S.vault-=n; S.credits+=n; shownCredits=S.credits; toast(`Took ${n.toLocaleString()} CR from the vault`); sfx.play('coins'); } }
   else if(b.dataset.accept!==undefined){ acceptContract(+b.dataset.accept); }
   else if(b.hasAttribute('data-turnin')){ const c=S.contracts.active; if(c&&ctReady(c)) completeContract(true); }
   else if(b.hasAttribute('data-abandon')){ if(S.contracts.active){ toast('Contract abandoned'); S.contracts.active=null; } }
@@ -3662,7 +3679,7 @@ $('#dock').addEventListener('click',e=>{
       if(switchShip(d.id)){ banner('New ship',d.name); flash(new V3(0,3,-44*KS),[3,2.4,1.4],40,0.6); } else S.ship=prev; } }
   else if(b.dataset.mod){ buyMod(b.dataset.mod); }
   else if(b.dataset.up){ const u=UPG.find(x=>x.id===b.dataset.up), l=S.up[u.id], c=upgCost(u,l);
-    if(l<MAXLV&&S.credits>=c){ S.credits-=c; const hm=st.hullMax; S.up[u.id]++; if(u.id==='hull') P.hull+=st.hullMax-hm; if(u.id==='shield') P.shield=st.shieldMax; toast(`${u.name} upgraded to level ${S.up[u.id]}`); sfx.tone('triangle',400,1600,0.35,0.06);} }
+    if(l<MAXLV&&S.credits>=c){ S.credits-=c; const hm=st.hullMax; S.up[u.id]++; if(u.id==='hull') P.hull+=st.hullMax-hm; if(u.id==='shield') P.shield=st.shieldMax; toast(`${u.name} upgraded to level ${S.up[u.id]}`); sfx.play('upgrade');} }
   else if(b.hasAttribute('data-close')){ closeStationPanel(); return; }
   renderDock(sec); saveGame();
 });
@@ -4030,7 +4047,7 @@ function updateCreditsDisplay(dt){
   if(Math.abs(diff)<1) shownCredits=S.credits;
   else { shownCredits+=diff*Math.min(1,dt*4.5)+Math.sign(diff)*Math.min(Math.abs(diff),dt*30); if(Math.sign(S.credits-shownCredits)!==Math.sign(diff)) shownCredits=S.credits; }
   const txt=Math.round(shownCredits).toLocaleString(); if(creditNode.nodeValue!==txt) creditNode.nodeValue=txt;
-  if(diff>3){ tickT-=dt; if(tickT<=0){ tickT=0.05; sfx.tone('square',2300,2100,0.018,0.01); } }
+  if(diff>3){ tickT-=dt; if(tickT<=0){ tickT=0.05; sfx.play('tick',{volume:0.6,cooldown:0.04}); } }
 }
 
 /* ---- Hints: one-time, plain-language tips shown at the moment they matter ---- */
@@ -4047,7 +4064,7 @@ const refUpCost=l=>Math.round(1500*Math.pow(2,l-1));
 function refineryTick(){
   const t=nowMs(); let done=0;
   S.refinery.jobs=S.refinery.jobs.filter(j=>{ if(j.end<=t){ S.bars[j.ore]=(S.bars[j.ore]||0)+1; done++; return false; } return true; });
-  if(done&&mode!=='title'){ toast(`Refinery: ${done} ${done>1?'bars':'bar'} ready to sell`,'ore'); sfx.tone('triangle',500,1000,0.25,0.05); }
+  if(done&&mode!=='title'){ toast(`Refinery: ${done} ${done>1?'bars':'bar'} ready to sell`,'ore'); sfx.play('notify'); }
   return done;
 }
 const fmtTime=ms=>{ const s=Math.max(0,Math.ceil(ms/1000)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; };
@@ -4141,7 +4158,7 @@ function streamFx(from,ore){
     dispose(){ scene.remove(s); s.material.dispose(); }});
 }
 let pkStreak=0, pkLast=-9;
-function pickupSound(){ if(time-pkLast<0.7) pkStreak=Math.min(pkStreak+1,18); else pkStreak=0; pkLast=time; const f=640*Math.pow(1.055,pkStreak); sfx.tone('sine',f,f*1.6,0.1,0.045); }
+function pickupSound(){ if(time-pkLast<0.7) pkStreak=Math.min(pkStreak+1,18); else pkStreak=0; pkLast=time; sfx.play('pickup',{rate:Math.pow(1.055,pkStreak),vary:0.01}); }
 const pickBuf={}; let pickFlushT=0;
 function notePickup(id,n){ pickBuf[id]=(pickBuf[id]||0)+(n||1); pickFlushT=0.9; }
 function flushPickups(dt){ if(pickFlushT<=0) return; pickFlushT-=dt; if(pickFlushT<=0){ for(const id in pickBuf){ toast(`+${pickBuf[id]} ${ORE[id].name}`,'ore'); delete pickBuf[id]; } } }
@@ -4179,7 +4196,7 @@ function updateOutposts(dt){
           const hp=new V3(-9,4,0).add(so.pos), dir=tgt.pos.clone().addScaledVector(tgt.vel,bd/520).sub(hp).normalize();
           const mb=new THREE.Mesh(boltGeoP,boltMatP); mb.position.copy(hp); mb.quaternion.setFromUnitVectors(Z_AXIS,dir); scene.add(mb);
           bolts.push({mesh:mb,vel:dir.multiplyScalar(520),life:1.4,own:'p',dmg:(14+10*o.turret)*Math.pow(1.22,o.sys),prev:hp.clone()});
-          if(ship.position.distanceTo(so.pos)<500) sfx.tone('square',900,300,0.08,0.02); } }
+          if(ship.position.distanceTo(so.pos)<500) sfx.play('turret',{vary:0.08}); } }
     }
   }
   COL.idle+=dt; if(COL.count>0&&COL.idle>0.8){ toast(`Collected ${COL.count} ore from your outpost`,'ore'); COL.count=0; }
@@ -4203,14 +4220,14 @@ function startInvasion(so){
   flash(base,[3,0.6,0.4],80,0.9);
   INV.active=true; INV.so=so; INV.total=n;
   banner('Invasion',`Drones attacking your ${ORE[so.o.ore].name} outpost`);
-  sfx.tone('sawtooth',300,600,0.3,0.05); setTimeout(()=>sfx.tone('sawtooth',300,600,0.3,0.05),350);
+  sfx.play('alarm');
   hint('invasion','Defend your outpost! Shoot the attacking drones. Outpost turrets help — buy them in outpost controls.',1200);
 }
 function updateInvasion(dt){
   if(mode!=='fly'&&mode!=='jump'&&mode!=='menu') return;
   if(INV.active){
     if(INV.so.o.damaged){ INV.active=false; drones.forEach(d=>{ if(d.inv){ d.attack=null; d.inv=false; } }); banner('Outpost lost','Repair it in outpost controls'); resetInvasionTimer(); return; }
-    if(!drones.some(d=>d.inv)){ INV.active=false; const rw=250+150*sys.info.i; addCredits(rw); banner('Invasion repelled',`+${rw.toLocaleString()} CR bonus`); sfx.tone('triangle',500,1500,0.5,0.06); resetInvasionTimer(); }
+    if(!drones.some(d=>d.inv)){ INV.active=false; const rw=250+150*sys.info.i; addCredits(rw); banner('Invasion repelled',`+${rw.toLocaleString()} CR bonus`); sfx.play('success'); resetInvasionTimer(); }
     return;
   }
   const live=sys.outposts.filter(so=>!so.o.damaged); if(!live.length) return;
@@ -4277,7 +4294,7 @@ function updateHive(dt){
     from.addScaledVector(dir,24);
     const m=new THREE.Mesh(boltGeoE,boltMatE); m.scale.set(3.2,3.2,2.2); m.position.copy(from); m.quaternion.setFromUnitVectors(Z_AXIS,dir); scene.add(m);
     bolts.push({mesh:m,vel:dir.multiplyScalar(150),life:7,own:'e',dmg:droneStats(HIVE.i).dmg*1.6,prev:from.clone(),orb:true});
-    sfx.tone('sawtooth',180,70,0.4,0.05); } }
+    sfx.play('eheavy',{vary:0.08}); } }
 }
 function hitHive(b,p){
   // returns true if the bolt was absorbed by the hive
@@ -4287,7 +4304,7 @@ function hitHive(b,p){
     py.hp-=b.dmg; burst(p,HIVE.col,10,30,1.5,0.4); sfx.hit();
     if(py.hp<=0){ py.alive=false; explosion(py.g.position.clone(),2.2,HIVE.col); sys.group.remove(py.g); sys.group.remove(py.beam);
       const left=hivePylonsLeft();
-      if(left>0) toast(`Shield pylon destroyed · ${left} left`); else { banner('Shield down','Destroy the hive core'); sfx.tone('triangle',300,900,0.4,0.06); } }
+      if(left>0) toast(`Shield pylon destroyed · ${left} left`); else { banner('Shield down','Destroy the hive core'); sfx.play('success'); } }
     return true; } }
   const alive=hivePylonsLeft();
   if(alive>0&&segHit(b.prev,p,HIVE.pos,80)){ HIVE.shieldMat.uniforms.k.value=2.2; burst(p,HIVE.col,6,20,1.6,0.3);
@@ -4356,7 +4373,7 @@ function spawnMother(){
   m.pods.forEach(p=>{ p.hp=pmax; p.max=pmax; });
   MOTHER={i,tier,...m,pos:m.g.position,hp:max,max,launchT:5,fireT:4,dead:false,awayT:0,hs:[new V3(),new V3(),new V3()]};
   flash(pos,DT[tier].core,900,1.4); shockwave(pos,DT[tier].core,700,1.6);
-  sfx.tone('sawtooth',55,38,2.8,0.09); setTimeout(()=>sfx.tone('sawtooth',70,45,2.2,0.07),700);
+  sfx.play('boss'); sfx.play('bigboom',{volume:0.5,rate:0.7,vary:0});
   banner('Warning · Mothership inbound','A drone carrier has warped in');
   hint('mother','A Drone Mothership! Shoot its four glowing engine pods for big damage. Or run — it is very tough. It drops a huge haul if you win.',1800);
 }
@@ -4384,13 +4401,13 @@ function updateMother(dt){
       for(let k=0;k<14;k++){ const a=k/14*Math.PI*2+spin, dir=ax.clone().multiplyScalar(Math.cos(a)*0.85).addScaledVector(ay,Math.sin(a)*0.85).addScaledVector(toP,0.55).normalize(), from=M.pos.clone().addScaledVector(dir,60);
         const m=new THREE.Mesh(boltGeoE,boltMatsE[M.tier]); m.scale.set(3,3,2.2); m.position.copy(from); m.quaternion.setFromUnitVectors(Z_AXIS,dir); scene.add(m);
         bolts.push({mesh:m,vel:dir.multiplyScalar(130),life:10,own:'e',dmg:droneStats(M.i).dmg*1.3,prev:from.clone(),orb:true}); }
-      flash(M.pos,[3.4,0.9,2.2],260,0.6); sfx.tone('sawtooth',90,45,0.9,0.07); } }
+      flash(M.pos,[3.4,0.9,2.2],260,0.6); sfx.play('eheavy',{rate:0.75,vary:0.05}); } }
   if(d<1000){ M.fireT-=dt; if(M.fireT<=0){ M.fireT=Math.max(1.1,3.2-0.5*(4-podsLeft()))*0.9;
     const live=M.pods.filter(p=>p.alive), src=live.length?live[Math.floor(Math.random()*live.length)].wp:M.hs[0];
     const from=src.clone(), dir=ship.position.clone().addScaledVector(P.vel,d/170*0.6).sub(from).normalize();
     const m=new THREE.Mesh(boltGeoE,boltMatsE[M.tier]); m.scale.set(3.4,3.4,2.4); m.position.copy(from); m.quaternion.setFromUnitVectors(Z_AXIS,dir); scene.add(m);
     bolts.push({mesh:m,vel:dir.multiplyScalar(175),life:7,own:'e',dmg:droneStats(M.i).dmg*1.8,prev:from.clone(),orb:true});
-    sfx.tone('sawtooth',160,60,0.4,0.05); } }
+    sfx.play('eshoot',{rate:0.85}); } }
 }
 function hitMother(b,p){
   const M=MOTHER; if(!M||M.dead) return false;
@@ -4430,14 +4447,14 @@ function startDistress(){
   const n=Math.min(6,2+Math.floor(i*0.5)), base=pos.clone().add(new V3(80,20,-60));
   for(let k=0;k<n;k++) spawnDrone(base.clone().add(new V3((r()-0.5)*90,(r()-0.5)*40,(r()-0.5)*90)),i,{dist:true,attack:DIST.sentinel});
   banner('Distress call','A hauler is under attack nearby');
-  sfx.tone('square',880,660,0.18,0.05); setTimeout(()=>sfx.tone('square',880,660,0.18,0.05),260);
+  sfx.play('distress'); sfx.later('distress',420);
   hint('distress','A hauler is being attacked! Follow its marker and destroy the drones to earn a reward.',1500);
 }
 function endDistress(saved){
   const D=DIST; if(!D) return; DIST=null; D.sentinel.o.damaged=true;
   drones.forEach(d=>{ if(d.dist){ d.dist=false; d.attack=null; } });
   if(saved){ S.stats.rescues++; gainStanding(sys.info.i,25); const pay=Math.round((350+220*D.i)*Math.pow(1.06,D.i)); addCredits(pay); addXp(90+10*D.i); banner('Hauler saved',`+${pay.toLocaleString()} CR reward`);
-    sfx.tone('triangle',500,1500,0.4,0.06); D.t.state='in'; D.t.shrink=true; setTrafficTarget(D.t); toast('The hauler thanks you and heads for the station','ore'); }   // it stays and flies in to dock like normal traffic
+    sfx.play('success'); D.t.state='in'; D.t.shrink=true; setTrafficTarget(D.t); toast('The hauler thanks you and heads for the station','ore'); }   // it stays and flies in to dock like normal traffic
   else { explosion(D.t.pos.clone(),2.2,[3.4,1.2,0.4]); sys.group.remove(D.t.g); disposeGroup(D.t.g); TRAFFIC.list.splice(TRAFFIC.list.indexOf(D.t),1); toast('The hauler was destroyed','bad'); }
   resetDistTimer(); saveGame();
 }
@@ -4484,7 +4501,7 @@ function lootWreck(w){
   const i=sys.info.i, cr=Math.round((300+160*i)*(0.8+Math.random()*0.5)); addCredits(cr); addXp(60+10*i);
   const it=ORE[DT[droneTier(i)].item]; for(let k=0;k<2+Math.floor(i/2);k++) spawnPickup(w.pos,it,25,{life:200});
   if(Math.random()<0.35) for(let k=0;k<2;k++) spawnPickup(w.pos,ORE.aurium,25,{life:200});
-  flash(w.pos.clone(),[1,2.4,3.4],80,0.6); sfx.tone('triangle',400,1200,0.4,0.06);
+  flash(w.pos.clone(),[1,2.4,3.4],80,0.6); sfx.play('loot');
   banner('Wreck salvaged',`+${cr.toLocaleString()} CR · collect the salvage`);
   if(i>=1&&Math.random()<0.35){ const base=w.pos.clone().add(new V3(120,30,-80)); for(let k=0;k<2+Math.floor(i/4);k++) spawnDrone(base.clone().add(new V3((Math.random()-0.5)*60,(Math.random()-0.5)*30,(Math.random()-0.5)*60)),i); toast('Ambush! Drones were hiding in the wreck','bad'); }
   saveGame();
@@ -4513,7 +4530,7 @@ function styleRace(){
     if(nx) c.setRGB(R.on?3.2:0.6,R.on?2.0:3.0,R.on?0.5:1.0); else c.setRGB(0.4,1.4,2.2);
     o.m.material.opacity=nx?1:(R.on?0.25:0.4); o.gl.material.color.copy(c); o.gl.material.opacity=nx?0.7:0.18; o.m.scale.setScalar(nx?1.08:1); });
 }
-function stopRace(){ if(!RACE||!RACE.on) return; RACE.on=false; RACE.next=0; styleRace(); $('#raceStop').hidden=true; toast('Flight course stopped'); sfx.tone('sine',600,300,0.15,0.04); }
+function stopRace(){ if(!RACE||!RACE.on) return; RACE.on=false; RACE.next=0; styleRace(); $('#raceStop').hidden=true; toast('Flight course stopped'); sfx.play('cancel'); }
 $('#raceStop').addEventListener('click',stopRace);
 $('#slotPulse').addEventListener('click',e=>{ e.preventDefault(); if(!busy) firePulse(); });
 [['#slotBeam','beam'],['#slotMissile','missile'],['#slotArc','arc']].forEach(([q,id])=>$(q).addEventListener('click',e=>{ e.preventDefault(); if(!busy) useMod(id); }));
@@ -4525,13 +4542,13 @@ function updateRace(dt){
   if(!R.seen&&ship.position.distanceTo(R.rings[0])<900){ R.seen=true; hint('race','A flight course! Fly through the green gate to start the timer, then through each glowing ring and back to the start.',300); }
   const tgt=R.rings[R.on?R.next:0];
   if(segHit(R.prev,ship.position,tgt,15)){
-    if(!R.on){ R.on=true; R.next=1; R.t0=performance.now(); sfx.tone('square',660,990,0.15,0.05); toast('Course started · go go go!'); }
+    if(!R.on){ R.on=true; R.next=1; R.t0=performance.now(); sfx.play('go'); toast('Course started · go go go!'); }
     else if(R.next===0){ const ms=performance.now()-R.t0, key=String(R.i), best=S.race.best[key];
-      R.on=false; R.next=0; sfx.tone('triangle',600,1800,0.5,0.07);
+      R.on=false; R.next=0; sfx.play('success');
       if(!S.race.done[key]){ S.race.done[key]=1; const pay=500+120*R.i; addCredits(pay); addXp(40); banner(`Course complete · ${fmtRace(ms)}`,`+${pay.toLocaleString()} CR first-run bonus`); }
       else banner('Course complete',fmtRace(ms)+(best&&ms<best?' · new best!':best?` · best ${fmtRace(best)}`:''));
       if(!best||ms<best) S.race.best[key]=Math.round(ms); saveGame(); }
-    else { R.next=(R.next+1)%R.rings.length; sfx.tone('sine',880,1320,0.1,0.05); }
+    else { R.next=(R.next+1)%R.rings.length; sfx.play('ring'); }
     styleRace();
   }
   if(R.on&&performance.now()-R.t0>180000){ R.on=false; R.next=0; styleRace(); toast('Course timed out'); }
@@ -4605,13 +4622,13 @@ $('#ops').addEventListener('click',e=>{
   if(b.hasAttribute('data-build')){ const f=OPS.ref, i=sys.info.i, cost=OP_COST(i); if(S.credits<cost) return;
     S.credits-=cost; const o={sys:i,f:f.idx,ore:f.featured.id,drill:1,tank:1,turret:0,stored:{},hp:0,damaged:false,t:nowMs()}; o.hp=opHpMax(o);
     S.outposts[f.key]=o; const so=addOutpostModel(f,o);
-    flash(so.pos.clone(),[3,2.4,1.4],120,0.8); shockwave(so.pos.clone(),[2.4,1.6,0.6],140,1); sfx.tone('triangle',300,1200,0.6,0.07);
+    flash(so.pos.clone(),[3,2.4,1.4],120,0.8); shockwave(so.pos.clone(),[2.4,1.6,0.6],140,1); sfx.play('success');
     if(!INV.active&&INV.timer>420) resetInvasionTimer(true);
     hint('first-outpost','Your outpost is mining! It keeps working at half speed while you are away. Press B any time to see your empire.',600);
     OPS={kind:'outpost',ref:so}; renderOps(); saveGame(); return; }
   if(b.dataset.opup){ const so=OPS.ref, o=so.o, u=OP_UP.find(x=>x.id===b.dataset.opup), c=opUpCost(o,u);
-    if((o[u.id]||0)<u.max&&S.credits>=c){ S.credits-=c; const hm=opHpMax(o); o[u.id]=(o[u.id]||0)+1; if(u.id==='freighter'){ o.ft=nowMs(); hint('freighter','Your freighter will haul this outpost\'s ore to market automatically, even while you are offline.',300); } if(u.id==='turret') o.hp+=opHpMax(o)-hm; sfx.tone('triangle',400,1600,0.35,0.06); toast(`${u.name} upgraded to level ${o[u.id]}`); } }
-  if(b.hasAttribute('data-oprepair')){ const o=OPS.ref.o, c=opRepairCost(o); if(S.credits>=c){ S.credits-=c; o.hp=opHpMax(o); o.damaged=false; o.t=nowMs(); sfx.tone('sine',300,700,0.3,0.05); toast('Outpost repaired'); } }
+    if((o[u.id]||0)<u.max&&S.credits>=c){ S.credits-=c; const hm=opHpMax(o); o[u.id]=(o[u.id]||0)+1; if(u.id==='freighter'){ o.ft=nowMs(); hint('freighter','Your freighter will haul this outpost\'s ore to market automatically, even while you are offline.',300); } if(u.id==='turret') o.hp+=opHpMax(o)-hm; sfx.play('upgrade'); toast(`${u.name} upgraded to level ${o[u.id]}`); } }
+  if(b.hasAttribute('data-oprepair')){ const o=OPS.ref.o, c=opRepairCost(o); if(S.credits>=c){ S.credits-=c; o.hp=opHpMax(o); o.damaged=false; o.t=nowMs(); sfx.play('confirm'); toast('Outpost repaired'); } }
   renderOps(); saveGame();
 });
 
@@ -4620,7 +4637,7 @@ const CB={n:0,last:-99};
 function comboBreak(){
   if(time-CB.last<5) CB.n++; else CB.n=1; CB.last=time;
   const mult=Math.min(3,1+0.25*(CB.n-1));
-  if(CB.n>=2){ const el=$('#combo'); el.textContent=`Combo ×${mult.toFixed(2).replace(/\.?0+$/,'')}`; el.classList.add('on'); el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); sfx.tone('triangle',500+CB.n*60,900+CB.n*80,0.15,0.04); }
+  if(CB.n>=2){ const el=$('#combo'); el.textContent=`Combo ×${mult.toFixed(2).replace(/\.?0+$/,'')}`; el.classList.add('on'); el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); sfx.play('combo',{rate:Math.min(2,0.9+CB.n*0.08),vary:0}); }
   return mult;
 }
 
@@ -4656,7 +4673,7 @@ function empireSecond(){
     if(tr===2) hint('abyss','Abyssal drones: the deadliest in the galaxy. They fire 3-shot spreads and lead their aim. Bring your best ship.',400);
     if(HIVE&&!HIVE.dead) hint('hive','A drone hive controls this system. Destroy its 3 shield pylons, then the core, to liberate it. The hive drops a big haul of salvage.',800);
   }
-  { const c=S.contracts.active; if(c&&(c.type==='deliver'||c.type==='salvage')){ const rd=ctReady(c); if(rd&&!c.rn){ c.rn=1; toast('Contract ready! Turn it in at any station\'s Contracts terminal','ore'); sfx.tone('triangle',700,1300,0.25,0.05); } else if(!rd) c.rn=0; } }
+  { const c=S.contracts.active; if(c&&(c.type==='deliver'||c.type==='salvage')){ const rd=ctReady(c); if(rd&&!c.rn){ c.rn=1; toast('Contract ready! Turn it in at any station\'s Contracts terminal','ore'); sfx.play('notify'); } else if(!rd) c.rn=0; } }
   if(mode==='station'&&S.credits>=2500&&!Object.values(S.ships).some(s=>s.mods&&Object.keys(s.mods).length)) hint('wpnshop','New at the Shipyard: weapons that bolt onto your ship. Have a look in the Weapons tab.');
   if(mode==='station'&&ORES.some(o=>(S.cargo[o.id]||0)>=10)) hint('refine','Tip: at the Ore Exchange you can refine 10 ore into a bar worth about 70% more.');
 }
@@ -4749,7 +4766,7 @@ function updateTurrets(dt){
     const m=new THREE.Mesh(boltGeoP,playerBoltMat()); m.position.copy(wp); m.quaternion.setFromUnitVectors(Z_AXIS,dir); scene.add(m);
     if(t.kind==='combat'){ t.cool=0.5; bolts.push({mesh:m,vel:dir.multiplyScalar(600).add(P.vel),life:1.2,own:'p',dmg:st.dmg*0.6,prev:wp.clone(),mine:def.mine}); }
     else { t.cool=0.42; bolts.push({mesh:m,vel:dir.multiplyScalar(560).add(P.vel),life:0.9,own:'pm',dmg:st.dmg*0.9,prev:wp.clone(),mine:def.mine}); }
-    sfx.tone('square',t.kind==='combat'?1100:700,300,0.06,0.015);
+    sfx.play('turret',{rate:t.kind==='combat'?1.1:0.9,vary:0.06});
   }
 }
 function coast(dt){
@@ -4796,7 +4813,7 @@ function dropCargo(id,n){
     const pos=ship.position.clone().addScaledVector(back,9*SHIP().size);
     const vel=back.clone().multiplyScalar(22+Math.random()*10).add(new V3(Math.random()-0.5,Math.random()-0.5,Math.random()-0.5).multiplyScalar(16)).add(P.vel);
     spawnPickup(pos,ORE[id],4,{qty,noPick:5,vel,life:150}); }
-  toast(`Dropped ${n} ${ORE[id].name}`); sfx.tone('sine',500,250,0.15,0.04);
+  toast(`Dropped ${n} ${ORE[id].name}`); sfx.play('drop');
 }
 $('#cargoP').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return;
@@ -4822,7 +4839,7 @@ function shipsHtml(){
 function switchShip(id){
   const d=SHIP_BY[id], cap=Math.round(cargoCapL((S.ships[id]||{up:freshUp()}).up.cargo+(d.lvb||0))*d.cargo);
   if(cargoUsed()>cap){ toast(`The ${d.name} holds ${cap} units — sell some cargo first`,'bad'); return false; }
-  setShip(id); P.hull=st.hullMax; P.shield=st.shieldMax; toast(`Now flying the ${d.name}`); sfx.tone('triangle',300,900,0.4,0.06); return true;
+  setShip(id); P.hull=st.hullMax; P.shield=st.shieldMax; toast(`Now flying the ${d.name}`); sfx.play('upgrade',{rate:0.9}); return true;
 }
 
 function previewLaser(){
@@ -4840,7 +4857,7 @@ const rankBonus=()=>1+0.06*rankOf(S.xp||0);                // contract rewards g
 function addXp(n){
   if(!(n>0)) return; const before=rankOf(S.xp||0); S.xp=(S.xp||0)+n; const after=rankOf(S.xp);
   if(after>before){ const bonus=300*after*after; addCredits(bonus); banner(`Rank up · +${bonus.toLocaleString()} CR`,RANKS[after]);
-    sfx.tone('triangle',400,1600,0.5,0.07); setTimeout(()=>sfx.tone('triangle',600,2000,0.5,0.06),180);
+    sfx.play('rankup');
     hint('rank','You ranked up! Higher ranks pay more on every contract.',2800); if(after>=2) hint('pulse','New ability unlocked: Shock Pulse! Press F (or PULSE) to blast nearby drones away and erase their shots. Recharges in 25 s.',9000); saveGame(); }
 }
 function rankHtml(){
@@ -4896,7 +4913,7 @@ function completeContract(viaStation){
   if(c.type==='deliver'||c.type==='salvage'){ S.cargo[c.ore]-=c.n; if(S.cargo[c.ore]<=0) delete S.cargo[c.ore]; }
   const pay=ctPay(c); gainStanding(c.from,30+Math.round(c.xp*0.2)); S.contracts.active=null; S.contracts.done=(S.contracts.done||0)+1;
   addCredits(pay); banner('Contract complete',`+${pay.toLocaleString()} CR`);
-  sfx.tone('triangle',500,1500,0.45,0.07); setTimeout(()=>sfx.tone('triangle',750,2200,0.4,0.05),160);
+  sfx.play('contract');
   addXp(c.xp); saveGame();
 }
 // called from gameplay: kill, golden, hive, dock
@@ -4923,7 +4940,7 @@ function contractsHtml(){
 }
 function acceptContract(k){
   const b=boardFor(sys.info.i), c=b.list[k]; if(!c||S.contracts.active) return;
-  S.contracts.active=c; b.list.splice(k,1); toast(`Contract accepted: ${c.title}`); sfx.tone('sine',500,900,0.2,0.05);
+  S.contracts.active=c; b.list.splice(k,1); toast(`Contract accepted: ${c.title}`); sfx.play('confirm');
   hint('contract-hud','Your contract shows at the top of the screen while you fly.',600);
   if(c.type==='courier'||c.type==='hive') hint('contract-jump','Open the star chart (J) to find the system for your contract.',1600);
   saveGame();
@@ -4947,7 +4964,7 @@ function updateRankChip(){
 }
 function tutEvent(ev){ if(S.tut>=0&&TUT[S.tut]&&TUT[S.tut].ev===ev) tutAdvance(); }
 function tutAdvance(){
-  S.tut++; sfx.tone('sine',800,1300,0.15,0.05);
+  S.tut++; sfx.play('step');
   if(S.tut>=TUT.length){ S.tut=-1; addCredits(300); banner('Training complete','+300 CR · the frontier is yours'); addXp(50); }
   tutRender(); saveGame();
 }
@@ -4996,7 +5013,7 @@ const ACH=[
 function achCheck(){
   if(mode==='title') return;
   for(const a of ACH){ if(S.ach[a.id]) continue; if(a.ok(S.stats)){ S.ach[a.id]=1; addCredits(a.r); toast(`Achievement · ${a.n} · +${a.r.toLocaleString()} CR`,'ore');
-    sfx.tone('triangle',700,1400,0.3,0.06); setTimeout(()=>sfx.tone('triangle',1050,2100,0.3,0.05),120);
+    sfx.play('achieve');
     hint('ach','Achievements pay credits. See them all under Empire (B) > Achievements.',2500); saveGame(); return; } }
 }
 function achHtml(){
@@ -5014,7 +5031,7 @@ function firePulse(){
   if(P.pulseCd>0){ toast(`Pulse recharging · ${Math.ceil(P.pulseCd)}s`); return; }
   P.pulseCd=PULSE_CD; const pos=ship.position.clone();
   shockwave(pos,[0.6,2.2,3.4],PULSE_R*1.9,0.7); shockwave(pos,[1.4,2.6,3.4],PULSE_R*1.2,0.45); flash(pos,[1,2.4,3.4],120,0.5);
-  sfx.boom(0.35,0.9,2400); sfx.tone('sine',220,1400,0.5,0.07); shieldMat.uniforms.k.value=2.4;
+  sfx.play('shield'); sfx.play('boom',{volume:0.6,rate:1.2}); shieldMat.uniforms.k.value=2.4;
   for(let j=drones.length-1;j>=0;j--){ const d=drones[j], dd=d.pos.distanceTo(pos); if(dd<PULSE_R){
     d.vel.add(tv1.copy(d.pos).sub(pos).normalize().multiplyScalar(260)); d.cool=Math.max(d.cool,2.5);
     hitDrone(d,j,st.dmg*7*(1-dd/PULSE_R*0.5),d.pos.clone()); } }
@@ -5112,7 +5129,7 @@ function commsTick(dt){
     C.cur=C.q.shift(); C.t=0; C.shown=-1; const sp=SPK[C.cur[0]]||SPK.ai;
     CM.pic.textContent=sp.g; CM.box.style.setProperty('--spk',sp.c); CM.nm.textContent=sp.n; CM.box.classList.toggle('glitch',C.cur[0]==='choir');
     CM.box.hidden=false; CM.box.classList.remove('in'); void CM.box.offsetWidth; CM.box.classList.add('in');
-    if(C.cur[0]==='choir'){ sfx.tone('sawtooth',90,60,0.6,0.05); sfx.tone('square',1300,700,0.2,0.02); } else sfx.tone('sine',1200,1500,0.06,0.03);
+    if(C.cur[0]==='choir') sfx.play('eerie',{cooldown:0.3}); else sfx.play('tick');
   }
   if(paused) return;
   C.t+=dt; const full=C.cur[1], n=Math.min(full.length,Math.floor(C.t*48));
@@ -5141,7 +5158,7 @@ function storyAdvance(){
   const s=storyStep(); if(!s) return;
   if(s.fin) s.fin();
   say(s.end); addCredits(s.r); addXp(Math.round(s.r/8)+40); toast(`Story · ${s.obj} · +${s.r.toLocaleString()} CR`,'ore');
-  sfx.tone('triangle',500,1000,0.3,0.05); setTimeout(()=>sfx.tone('triangle',750,1500,0.4,0.05),160);
+  sfx.play('story');
   S.story.st=(S.story.st|0)+1;
   if(storyDone()){ storyEnding(); saveGame(); return; }
   storyStart();
@@ -5179,7 +5196,7 @@ function storyTick(dt){
   if(!S.story.started){
     const box=$('#storyAsk');
     if(!box.hidden){ if(mode!=='fly'&&mode!=='menu'&&mode!=='jump'){ box.hidden=true; ASK.shown=false; } return; }
-    if(S.tut<0&&mode==='fly'&&!CINE&&sys.info&&(sys.info.i===1||sys.info.i===2)&&!ASK.skip){ storyT+=dt; if(storyT>3){ storyT=0; ASK.shown=true; box.hidden=false; sfx.tone('sine',1200,1500,0.06,0.03); } }
+    if(S.tut<0&&mode==='fly'&&!CINE&&sys.info&&(sys.info.i===1||sys.info.i===2)&&!ASK.skip){ storyT+=dt; if(storyT>3){ storyT=0; ASK.shown=true; box.hidden=false; sfx.play('talk'); } }
     return; }
   const s=storyStep(); if(!s) return;
   if(SBEACON){ SBEACON.r1.rotation.y+=dt*(0.6+S.story.scan*4); SBEACON.r2.rotation.z+=dt*(0.4+S.story.scan*3); SBEACON.core.rotation.y+=dt*0.5; }
@@ -5187,15 +5204,15 @@ function storyTick(dt){
     const d=ship.position.distanceTo(SBEACON.pos);
     if(s.guard&&!S.story.g&&d<900){ S.story.g=1; storySpawnStoryDrones(s.guard,SBEACON.pos,true); toast('The Choir guards this signal','bad'); }
     const guarded=drones.some(x=>x.story&&x.pos.distanceTo(SBEACON.pos)<700);
-    if(d<170&&!guarded){ S.story.scan=Math.min(1,S.story.scan+dt/3.5); if(Math.random()<dt*6) sfx.tone('sine',700+S.story.scan*900,900+S.story.scan*900,0.05,0.02);
-      if(S.story.scan>=1){ flash(SBEACON.pos,[2.4,1.2,3.6],260,0.9); shockwave(SBEACON.pos,[2,1,3.4],400,1); sfx.tone('triangle',400,1800,0.6,0.06);
+    if(d<170&&!guarded){ S.story.scan=Math.min(1,S.story.scan+dt/3.5); if(Math.random()<dt*6) sfx.play('tick',{rate:1+S.story.scan,volume:0.7});
+      if(S.story.scan>=1){ flash(SBEACON.pos,[2.4,1.2,3.6],260,0.9); shockwave(SBEACON.pos,[2,1,3.4],400,1); sfx.play('success');
         const pos=SBEACON.pos.clone(); sys.group.remove(SBEACON.g); disposeGroup(SBEACON.g); SBEACON=null; storyAdvance();
         const n=storyStep(); if(n&&n.kind==='ambush'&&sys.info.i===n.sys) storySpawnT=1.2; return; } }
   }
   if(s.kind==='ambush'&&mode==='fly'&&sys.info.i===s.sys&&!drones.some(x=>x.story)&&(S.story.k|0)<s.n){
     if(storySpawnT<=0) storySpawnT=2.5; storySpawnT-=dt;
     if(storySpawnT<=0){ const fw=new V3(0,0,-1).applyQuaternion(ship.quaternion), side=new V3(Math.random()-0.5,0.2,Math.random()-0.5).normalize();
-      storySpawnStoryDrones(s.n-(S.story.k|0),ship.position.clone().addScaledVector(fw,420).addScaledVector(side,260),false); sfx.tone('sawtooth',300,80,0.5,0.05); }
+      storySpawnStoryDrones(s.n-(S.story.k|0),ship.position.clone().addScaledVector(fw,420).addScaledVector(side,260),false); sfx.play('threat'); }
   }
   if(s.kind==='ambush'&&(S.story.k|0)>=s.n){ storyAdvance(); return; }
   if(s.kind==='boss'&&mode==='fly'&&sys.info.i===s.sys&&!MOTHER&&!INV.active){
@@ -5254,7 +5271,7 @@ function storyEnding(){
       <dl class="kv"><dt>Drones destroyed</dt><dd>${S.stats.kills.toLocaleString()}</dd><dt>Systems visited</dt><dd>${S.visited.length} of ${GALAXY.N}</dd><dt>Credits earned</dt><dd>${t} CR</dd><dt>Clones used</dt><dd>${(S.stats.clones||0)+1}</dd></dl>
       <p class="note">Reward unlocked: <b style="color:#ffe9b0">Driftlight</b> laser color at the Outfitter. The frontier stays open. Keep flying, keep building.</p>
       <button type="button" class="btn primary" data-endok>Keep flying</button></div>`;
-    el.hidden=false; sfx.tone('triangle',300,600,1.2,0.06); setTimeout(()=>sfx.tone('triangle',450,900,1.4,0.05),400);
+    el.hidden=false; sfx.play('ending');
   },9000);
 }
 $('#ending').addEventListener('click',e=>{ if(e.target.closest('[data-endok]')){ $('#ending').hidden=true; sfx.click(); } });
@@ -5293,10 +5310,10 @@ function echoTick(dt){
   const i=sys.info.i;
   if(!E.guard&&d<900){ E.guard=1; const n=2+Math.floor(i/6); for(let k=0;k<n;k++){ const g=spawnDrone(E.pos.clone().add(new V3((Math.random()-0.5)*160,(Math.random()-0.5)*60,(Math.random()-0.5)*160)),i,{echo:true}); g.hp=g.maxHp=Math.round(g.maxHp*1.5); } toast('Echo guards awake','bad'); }
   const guarded=drones.some(x=>x.echo&&x.pos.distanceTo(E.pos)<700);
-  if(d<170&&!guarded){ E.scan=Math.min(1,E.scan+dt/2.5); if(Math.random()<dt*6) sfx.tone('sine',500+E.scan*700,700+E.scan*700,0.05,0.02);
+  if(d<170&&!guarded){ E.scan=Math.min(1,E.scan+dt/2.5); if(Math.random()<dt*6) sfx.play('tick',{rate:0.8+E.scan,volume:0.7});
     if(E.scan>=1){
       const pos=E.pos.clone(), it=ORE[DT[droneTier(i)].item];
-      flash(pos,[3.2,2.3,0.8],260,0.9); shockwave(pos,[3,2.2,0.8],380,1); sfx.tone('triangle',500,1500,0.6,0.06);
+      flash(pos,[3.2,2.3,0.8],260,0.9); shockwave(pos,[3,2.2,0.8],380,1); sfx.play('success');
       for(let k=0;k<5+i;k++) spawnPickup(pos,it,60,{life:200}); for(let k=0;k<1+Math.floor(i/5);k++) spawnPickup(pos,ORE.aurium,60,{life:200});
       const cr=300+150*i; addCredits(cr); addXp(60+10*i);
       sys.group.remove(E.g); disposeGroup(E.g); ECHO=null; el.hidden=true;
@@ -5368,7 +5385,7 @@ $('#settings').addEventListener('input',e=>{ const t=e.target; if(!t.id) return;
   if(t.id==='setVol') SET.vol=+t.value; else if(t.id==='setMusic') SET.music=+t.value; else if(t.id==='setSens') SET.sens=+t.value;
   else if(t.id==='setInv') SET.inv=t.checked; else if(t.id==='setShake') SET.shake=t.checked; else if(t.id==='setRep') SET.dockRepair=t.checked; else if(t.id==='setStory'){ SET.story=t.checked; if(!SET.story){ COMMS.q=[]; COMMS.cur=null; } if(sys.group) storyBuild(); }
   const o=t.parentNode.querySelector('output'); if(o&&t.type==='range') o.textContent=t.value+'%';
-  if(sfx.master&&!sfx.muted) sfx.master.gain.value=masterVol(); saveSettings(); });
+  if(sfx.master&&!sfx.muted) sfx.master.gain.value=masterVol(); sfx.syncVol(); saveSettings(); });
 $('#settings').addEventListener('click',e=>{ if(e.target.closest('[data-sclose]')){ $('#settings').hidden=true; sfx.click(); } });
 $('#titleSet').addEventListener('click',openSettings);
 
@@ -5471,7 +5488,7 @@ function fireBeam(lv){
   const outer=mk(col,0.5), core=mk([3,3,3.2],0.95), tip=glowSprite(col,8), hitG=glowSprite(col,14);
   scene.add(tip); scene.add(hitG);
   const B=BEAM={t:BEAM_T,tick:0,dps:gunDps()*BEAM_K[lv-1],mine:SHIP().mine};
-  sfx.tone('sawtooth',90,420,0.35,0.06); sfx.tone('sine',600,1400,0.3,0.05);
+  sfx.play('beam');
   hint('beam1','Beam Laser: it pierces every drone in a line and cuts asteroids too. Keep your nose on target!',200);
   const from=new V3(), dir=new V3(), end=new V3(), tq=new V3(), fb={prev:from,dmg:0};
   fx.push({update(dt){
@@ -5494,7 +5511,7 @@ function fireBeam(lv){
       if(rock){ const j=asteroids.indexOf(rock); if(j>=0) hitAsteroid(rock,j,dmg*B.mine,end.clone()); }
       if(HIVE&&!HIVE.dead){ const t=clamp(tq.copy(HIVE.pos).sub(from).dot(dir)+150,0,len); hitHive(fb,from.clone().addScaledVector(dir,t)); }
       if(MOTHER&&!MOTHER.dead){ const t=clamp(tq.copy(MOTHER.pos).sub(from).dot(dir)+100,0,len); hitMother(fb,from.clone().addScaledVector(dir,t)); }
-      if(Math.random()<0.35) sfx.tone('sawtooth',120+Math.random()*40,90,0.08,0.025);
+      if(Math.random()<0.35) sfx.play('buzz',{vary:0.15});
     }
     return true; },
     dispose(){ [outer,core,tip,hitG].forEach(o=>{ scene.remove(o); o.material.dispose(); }); if(BEAM===B) BEAM=null; }});
@@ -5519,7 +5536,7 @@ function launchMissile(mt,target,dmg){
   const m=new THREE.Mesh(MSL_GEO,MSL_MAT); m.position.copy(pos); scene.add(m);
   const fl=glowSprite([3.4,1.4,0.4],4); fl.position.z=-1.4; m.add(fl);
   const dir=new V3(), tq=new V3(); let t=0, tgt=target, puff=0;
-  sfx.tone('square',200,80,0.16,0.03);
+  sfx.play('missile',{vary:0.08});
   fx.push({update(dt){
     t+=dt;
     if(!tgt||!drones.includes(tgt)){ tgt=null; let bd=650*650; for(const d of drones){ const q2=d.pos.distanceToSquared(pos); if(q2<bd){ bd=q2; tgt=d; } } }
@@ -5530,7 +5547,7 @@ function launchMissile(mt,target,dmg){
     fl.scale.setScalar(3+Math.random()*1.5);
     puff-=dt; if(puff<=0){ puff=0.07; flash(pos.clone(),[1.4,0.9,0.6],5,0.4); }
     if(tgt&&pos.distanceTo(tgt.pos)<(tgt.hitR||9.5)+1.5){
-      explosion(pos.clone(),0.7,[3.4,1.4,0.4]); sfx.boom(0.1,0.4,1800);
+      explosion(pos.clone(),0.7,[3.4,1.4,0.4]);
       for(let j=drones.length-1;j>=0;j--){ const d=drones[j], dd=d.pos.distanceTo(pos); if(d===tgt) hitDrone(d,j,dmg,pos.clone()); else if(dd<32) hitDrone(d,j,dmg*0.35,d.pos.clone()); }
       return false; }
     if(t>4.5){ flash(pos.clone(),[3,1.4,0.5],14,0.3); return false; }
@@ -5550,7 +5567,7 @@ function fireArc(lv){
   drawArc([from.clone(),...chain.map(d=>d.pos.clone())]);
   chain.forEach((d,k)=>{ d.cool=Math.max(d.cool,1.6); d.burst=0; d.vel.multiplyScalar(0.15); if(d.charger){ d.cs='stalk'; d.ct=2.5; }
     const j=drones.indexOf(d); if(j>=0) hitDrone(d,j,dmg*(1-k*0.05),d.pos.clone()); });
-  sfx.boom(0.08,0.35,5000); sfx.tone('sawtooth',1800,200,0.25,0.05);
+  sfx.play('arc');
   flash(from,[2.2,1.2,3.6],26,0.3);
   hint('arc1','Arc Cannon: lightning jumps between nearby drones and stuns them for a moment.',300);
   return true;
@@ -5599,7 +5616,7 @@ function buyMod(id){
   S.credits-=c; rec.mods[id]=lv+1; setShip(S.ship);
   if(!lv){ banner('Weapon fitted',m.name); hint('mod-'+id,`${m.name} fitted! ${isTouch?'Tap its button on the hotbar':`Press ${m.key}`} while flying to use it.`,600); }
   else toast(`${m.name} upgraded to Mk ${MK[lv]}`);
-  flash(new V3(0,3,-44*KS),[3,2.4,1.4],30,0.5); sfx.tone('triangle',400,1600,0.35,0.06);
+  flash(new V3(0,3,-44*KS),[3,2.4,1.4],30,0.5); sfx.play('upgrade');
 }
 
 
@@ -5610,7 +5627,7 @@ const standDisc=()=>sys.info?STAND[standTier(sys.info.i)].d:0;
 const shipPrice=d=>Math.round(d.price*(1-standDisc()));
 function gainStanding(i,n){
   if(!(n>0)) return; const b=standTier(i); S.standing[i]=((S.standing[i])||0)+n; const a=standTier(i);
-  if(a>b){ banner(`${systemInfo(i).station} · ${STAND[a].n}`,`${Math.round(STAND[a].d*100)}% off upgrades and ships there`); sfx.tone('triangle',500,1300,0.4,0.06);
+  if(a>b){ banner(`${systemInfo(i).station} · ${STAND[a].n}`,`${Math.round(STAND[a].d*100)}% off upgrades and ships there`); sfx.play('success');
     hint('standing','Helping a station raises your standing there. Higher standing means discounts on upgrades and ships at that station.',2600); }
 }
 function standHtml(i){ const k=standTier(i), v=Math.floor((S.standing&&S.standing[i])||0), top=k>=STAND.length-1, nx=top?v:STAND[k+1].at, f=top?1:(v-STAND[k].at)/(nx-STAND[k].at);
@@ -5717,7 +5734,7 @@ const WELCOME={seen:false};
 function closeWelcome(){ $('#welcome').hidden=true; WELCOME.seen=true; sfx.click(); tutRender(); }
 $('#wStart').addEventListener('click',closeWelcome);
 /* Browsers only allow sound after the player interacts, so the first click or key press (usually on the title screen) starts the audio and music */
-function wakeAudio(){ if(!sfx.ctx) sfx.init(); else if(sfx.ctx.state==='suspended') sfx.ctx.resume(); }
+function wakeAudio(){ if(!sfx.ctx) sfx.init(); else if(sfx.ctx.state==='suspended') sfx.ctx.resume(); if(sfx.lib&&sfx.lib.ctx.state==='suspended') sfx.lib.ctx.resume(); }
 addEventListener('pointerdown',wakeAudio); addEventListener('keydown',wakeAudio);
 function launch(){ if(!launch._tip){ launch._tip=1; setTimeout(()=>nudgeFs(true),1500); }
   if(mode!=='title'&&$('#title').hidden) return;
