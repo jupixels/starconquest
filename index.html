@@ -805,14 +805,14 @@ const cargoUsed = ()=>Object.values(S.cargo).reduce((a,b)=>a+b,0);
 /* Sound effects are real recordings (Kenney.nl, CC0) played through lib/sfx.js from lib/sounds-embedded.js.
    This object keeps its own AudioContext for the procedural music; the effects run on the sample player (this.lib). */
 const SFX_MIX = {   // per-event level on top of each sample's suggested volume
-  shoot:0.45, turret:0.3, eshoot:0.4, eheavy:0.55, hit:0.5, hurt:0.9, boom:1, bigboom:1, thrust:0.5, engine:0.9,
+  shoot:0.45, turret:0.3, eshoot:0.4, eheavy:0.55, hit:0.5, hurt:0.9, boom:1, bigboom:1, thrust:0.5,
   pickup:0.5, click:0.4, heartbeat:0.9, kill:0.35, windup:0.5, golden:0.6, shield:0.8, dock:0.7, undock:0.7,
   talk:0.45, next:0.35, confirm:0.55, coins:0.6, upgrade:0.6, notify:0.55, tick:0.3, eerie:0.5, alarm:0.7,
   distress:0.6, boss:0.9, loot:0.6, combo:0.5, drop:0.5, rankup:0.8, contract:0.75, achieve:0.7, story:0.6,
   ending:0.8, success:0.7, step:0.45, beam:0.6, buzz:0.25, missile:0.45, arc:0.6, go:0.7, ring:0.55, cancel:0.45, threat:0.6
 };
 const sfx = {
-  ctx:null, master:null, muted:false, noise:null, lib:null, humGain:null, humH:null,
+  ctx:null, master:null, muted:false, noise:null, lib:null, hum:null, humGain:null,
   init(){
     if (this.ctx) return;
     try{
@@ -821,14 +821,16 @@ const sfx = {
       const len = this.ctx.sampleRate*1.2, buf = this.ctx.createBuffer(1,len,this.ctx.sampleRate), ch = buf.getChannelData(0);
       for(let i=0;i<len;i++) ch[i] = Math.random()*2-1;
       this.noise = buf;   // used by the music's percussion
+      // engine hum stays synthesized: a low filtered sawtooth that follows the throttle
+      const o = this.ctx.createOscillator(); o.type='sawtooth'; o.frequency.value=48;
+      const f = this.ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=180;
+      this.humGain = this.ctx.createGain(); this.humGain.gain.value=0;
+      o.connect(f); f.connect(this.humGain); this.humGain.connect(this.master); o.start(); this.hum=o;
     }catch(e){ this.ctx=null; }
     try{
       if(window.SFX && window.SFX_DATA){
         this.lib = new SFX(); this.syncVol();
-        this.lib.load(window.SFX_DATA).then(()=>{
-          const h=this.lib.loop('engine',{volume:0,fadeIn:0});
-          if(h){ this.humH=h; this.humGain=h.gain; }
-        });
+        this.lib.load(window.SFX_DATA);
       }
     }catch(e){ this.lib=null; }
   },
@@ -841,7 +843,7 @@ const sfx = {
   later(name,ms,o){ setTimeout(()=>this.play(name,o),ms); },
   /* play the first part of a long sample, fading out after dur seconds */
   burst(name,dur,o){ const h=this.play(name,Object.assign({fadeIn:0.15},o)); if(h) setTimeout(()=>h.stop(0.4),dur*1000); return h; },
-  engine(fl){ if(!this.humH) return; this.humGain.gain.value=(0.1+fl*0.5)*SFX_MIX.engine; this.humH.setRate(0.92+fl*0.12); },
+  engine(fl){ if(!this.hum) return; this.humGain.gain.value=0.02+fl*0.035; this.hum.frequency.value=40+fl*30; },
   explode(vol){   // vol was the old 0..0.5 loudness, already scaled by size and distance
     if(vol<0.02) return; this.play(vol>0.3?'bigboom':'boom',{volume:Math.min(1,vol*2.4),vary:0.08,cooldown:0.05});
   },
