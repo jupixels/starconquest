@@ -1,0 +1,39 @@
+{
+  "id": "./",
+  "name": "Star Conquest",
+  "short_name": "Star Conquest",
+  "description": "Conquer the frontier: mine, trade, build a fleet and free all 18 systems.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": [
+    "fullscreen",
+    "standalone"
+  ],
+  "orientation": "any",
+  "background_color": "#120a28",
+  "theme_color": "#120a28",
+  "categories": [
+    "games"
+  ],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
